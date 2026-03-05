@@ -199,20 +199,36 @@ class ChatServerCore:
            
         elif mtype == 'file':
             filename = msg.get('filename')
+            filedata = msg.get('filedata')
+            filetype = msg.get('filetype')
             recipient = msg.get('recipient')
             room = msg.get('room')
 
             self.log(f"[{self.timestamp()}] {sender} sent file: {filename}")
 
             try:
-                save_chat_message(
-                    sender=sender,
-                    content=filename,
-                    room=room,
-                    receiver=recipient,
-                    msg_type="file",
-                    timestamp=timestamp
-        )
+                if recipient:
+                    save_private_message(
+                        user1=sender,
+                        user2=recipient,
+                        sender=sender,
+                        content=None,
+                        filename=filename,
+                        filedata=filedata,
+                        filetype=filetype
+                    )
+                else:
+                    save_chat_message(
+                        sender=sender,
+                        content=None,
+                        room=room,
+                        receiver=None,
+                        msg_type="file",
+                        timestamp=timestamp,
+                        filename=filename,
+                        filedata=filedata,
+                        filetype=filetype
+                    )
             except Exception as e:
                 self.log(f"Firebase error: {e}")
                

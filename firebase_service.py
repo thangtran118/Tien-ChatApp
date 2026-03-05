@@ -7,7 +7,7 @@ firebase_admin.initialize_app(cred)
 
 db = firestore.client()
 
-def save_chat_message(sender, content, room, receiver, msg_type, timestamp):
+def save_chat_message(sender, content, room, receiver, msg_type, timestamp, filename=None, filedata=None, filetype=None):
     data = {
         "sender": sender,
         "content": content,
@@ -16,6 +16,14 @@ def save_chat_message(sender, content, room, receiver, msg_type, timestamp):
         "type": msg_type,
         "timestamp": datetime.utcnow()
     }
+    
+    if filename:
+        data["filename"] = filename
+    if filedata:
+        data["filedata"] = filedata
+    if filetype:
+        data["filetype"] = filetype
+    
     db.collection("messages").add(data)
 
 
@@ -30,21 +38,31 @@ def load_room_history(room_name):
 
     return messages
 
-def save_private_message(user1, user2, sender, content):
+def save_private_message(user1, user2, sender, content, filename=None, filedata=None, filetype=None):
     try:
         chat_id = "_".join(sorted([user1, user2]))
+
+        data = {
+            "sender": sender,
+            "content": content,
+            "timestamp": datetime.utcnow(),
+            "type": "chat"
+        }
+        
+        if filename:
+            data["filename"] = filename
+        if filedata:
+            data["filedata"] = filedata
+        if filetype:
+            data["filetype"] = filetype
 
         db.collection("private_chats") \
           .document(chat_id) \
           .collection("messages") \
-          .add({
-              "sender": sender,
-              "content": content,
-              "timestamp": datetime.utcnow(),
-              "type": "chat"
-          })
+          .add(data)
     except Exception as e:
         print("Error saving private message:", e)
+
 def load_private_history(user1, user2):
     try:
         chat_id = "_".join(sorted([user1, user2]))

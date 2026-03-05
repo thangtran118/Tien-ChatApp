@@ -881,11 +881,23 @@ class SimplifiedClient:
 
             for msg in history:
                 sender = msg.get("sender")
-                content = msg.get("content")
                 raw_ts = msg.get("timestamp")
                 ts = self.convert_timestamp(raw_ts)
 
-                self.display_private_message(sender, content, ts)
+                content = msg.get("content")
+                filename = msg.get("filename")
+                filedata = msg.get("filedata")
+                filetype = msg.get("filetype")
+
+                # Nếu là tin nhắn text
+                if content:
+                    self.display_private_message(sender, content, ts)
+
+                # Nếu là file
+                elif filename and filedata:
+                    file_bytes = base64.b64decode(filedata)
+                    is_voice = (filetype == ".wav" and filename.startswith("voice_msg_"))
+                    self.display_file_message(sender, filename, file_bytes, is_voice, ts)
 
         except Exception as e:
             print("Private history load error:", e)
