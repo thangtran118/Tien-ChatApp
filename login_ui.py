@@ -1,207 +1,209 @@
 import subprocess
 import sys
-import tkinter as tk
-from tkinter import messagebox
+from PyQt6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QLineEdit, QPushButton, QFrame, QMessageBox
+)
+from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRect
+from PyQt6.QtGui import QFont, QColor, QPalette
 from firebase_client import firebase_login, firebase_register
 
 
-
-
-# ================== FUNCTIONS ================== #
-
-
-def handle_login():
-    email = email_entry.get().strip()
-    password = password_entry.get().strip()
-
-
-    if not email or not password:
-        messagebox.showwarning("Missing", "Please enter email and password")
-        return
-
-
-    try:
-        user = firebase_login(email, password)
-
-
-        global ID_TOKEN, USER_EMAIL
-        ID_TOKEN = user["idToken"]
-        USER_EMAIL = user["email"]
-
-
-        root.destroy()
-
-
-        subprocess.Popen([
-            sys.executable,
-            "chat_client.py",
-            USER_EMAIL,
-            ID_TOKEN
-        ])
-
-
-    except Exception as e:
-        messagebox.showerror("Login failed", str(e))
-
-
-
-
-def handle_register():
-    email = email_entry.get().strip()
-    password = password_entry.get().strip()
-
-
-    if not email or not password:
-        messagebox.showwarning("Missing", "Please enter email and password")
-        return
-
-
-    try:
-        firebase_register(email, password)
-        messagebox.showinfo("Success", "Register OK. You can login now.")
-    except Exception as e:
-        messagebox.showerror("Register failed", str(e))
-
-
-
-
-# ================== UI ================== #
-
-
-root = tk.Tk()
-root.title("CHAT LOGIN")
-root.geometry("440x500")
-root.configure(bg="#0f0f1a")
-root.resizable(False, False)
-root.eval('tk::PlaceWindow . center')
-
-
-# Card container
-card = tk.Frame(root, bg="#151528", highlightbackground="#6c5ce7",
-                highlightthickness=2)
-card.place(relx=0.5, rely=0.5, anchor="center",
-           width=370, height=420)
-
-
-# Title
-tk.Label(
-    card,
-    text="⚔ CHAT LOGIN ⚔",
-    font=("Segoe UI", 20, "bold"),
-    fg="#00f7ff",
-    bg="#151528"
-).pack(pady=(35, 10))
-
-
-tk.Label(
-    card,
-    text="Enter your account...",
-    font=("Segoe UI", 10),
-    fg="#aaaaaa",
-    bg="#151528"
-).pack(pady=(0, 25))
-
-
-
-
-# ===== Email =====
-tk.Label(
-    card,
-    text="EMAIL",
-    font=("Segoe UI", 9, "bold"),
-    fg="#6c5ce7",
-    bg="#151528",
-    anchor="w"
-).pack(fill="x", padx=45)
-
-
-email_entry = tk.Entry(
-    card,
-    font=("Consolas", 11),
-    bg="#1f1f35",
-    fg="#00f7ff",
-    insertbackground="#00f7ff",
-    relief="flat"
-)
-email_entry.pack(padx=45, pady=(5, 18), ipady=8, fill="x")
-
-
-
-
-# ===== Password =====
-tk.Label(
-    card,
-    text="PASSWORD",
-    font=("Segoe UI", 9, "bold"),
-    fg="#6c5ce7",
-    bg="#151528",
-    anchor="w"
-).pack(fill="x", padx=45)
-
-
-password_entry = tk.Entry(
-    card,
-    show="*",
-    font=("Consolas", 11),
-    bg="#1f1f35",
-    fg="#00f7ff",
-    insertbackground="#00f7ff",
-    relief="flat"
-)
-password_entry.pack(padx=45, pady=(5, 25), ipady=8, fill="x")
-
-
-
-
-# ===== Buttons =====
-login_btn = tk.Button(
-    card,
-    text="LOGIN",
-    font=("Segoe UI", 11, "bold"),
-    bg="#6c5ce7",
-    fg="white",
-    activebackground="#4834d4",
-    activeforeground="white",
-    relief="flat",
-    command=handle_login
-)
-login_btn.pack(padx=45, ipady=9, fill="x")
-
-
-register_btn = tk.Button(
-    card,
-    text="REGISTER",
-    font=("Segoe UI", 10),
-    bg="#00f7ff",
-    fg="#151528",
-    activebackground="#00c3cc",
-    activeforeground="#151528",
-    relief="flat",
-    command=handle_register
-)
-register_btn.pack(padx=45, pady=12, ipady=8, fill="x")
-
-
-
-
-# ===== Hover Effects =====
-def on_enter(e, btn, color):
-    btn['background'] = color
-
-
-def on_leave(e, btn, color):
-    btn['background'] = color
-
-
-
-
-login_btn.bind("<Enter>", lambda e: on_enter(e, login_btn, "#7d6bff"))
-login_btn.bind("<Leave>", lambda e: on_leave(e, login_btn, "#6c5ce7"))
-
-
-register_btn.bind("<Enter>", lambda e: on_enter(e, register_btn, "#00d2d8"))
-register_btn.bind("<Leave>", lambda e: on_leave(e, register_btn, "#00f7ff"))
-
-
-root.mainloop()
+class LoginWindow(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("CHAT LOGIN")
+        self.setFixedSize(440, 520)
+        self.setStyleSheet("background-color: #0f0f1a;")
+        self._build_ui()
+        self._center_window()
+
+    def _center_window(self):
+        screen = QApplication.primaryScreen().geometry()
+        x = (screen.width() - self.width()) // 2
+        y = (screen.height() - self.height()) // 2
+        self.move(x, y)
+
+    def _build_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(35, 40, 35, 40)
+        layout.setSpacing(0)
+
+        # Card frame
+        card = QFrame(self)
+        card.setStyleSheet("""
+            QFrame {
+                background-color: #151528;
+                border: 2px solid #6c5ce7;
+                border-radius: 12px;
+            }
+        """)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(40, 35, 40, 35)
+        card_layout.setSpacing(0)
+
+        # Title
+        title = QLabel("💬 CHAT LOGIN")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setFont(QFont("Segoe UI", 20, QFont.Weight.Bold))
+        title.setStyleSheet("color: #00f7ff; border: none; background: transparent;")
+        card_layout.addWidget(title)
+
+        subtitle = QLabel("Enter your account...")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setFont(QFont("Segoe UI", 10))
+        subtitle.setStyleSheet("color: #aaaaaa; border: none; background: transparent; margin-bottom: 20px;")
+        card_layout.addWidget(subtitle)
+        card_layout.addSpacing(15)
+
+        # Email label
+        email_label = QLabel("EMAIL")
+        email_label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        email_label.setStyleSheet("color: #6c5ce7; border: none; background: transparent;")
+        card_layout.addWidget(email_label)
+        card_layout.addSpacing(5)
+
+        # Email input
+        self.email_entry = QLineEdit()
+        self.email_entry.setPlaceholderText("your@email.com")
+        self.email_entry.setFont(QFont("Consolas", 11))
+        self.email_entry.setFixedHeight(42)
+        self.email_entry.setStyleSheet("""
+            QLineEdit {
+                background-color: #1f1f35;
+                color: #00f7ff;
+                border: 1px solid #2d2d50;
+                border-radius: 6px;
+                padding: 0 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #6c5ce7;
+            }
+        """)
+        card_layout.addWidget(self.email_entry)
+        card_layout.addSpacing(16)
+
+        # Password label
+        pwd_label = QLabel("PASSWORD")
+        pwd_label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+        pwd_label.setStyleSheet("color: #6c5ce7; border: none; background: transparent;")
+        card_layout.addWidget(pwd_label)
+        card_layout.addSpacing(5)
+
+        # Password input
+        self.password_entry = QLineEdit()
+        self.password_entry.setPlaceholderText("••••••••")
+        self.password_entry.setEchoMode(QLineEdit.EchoMode.Password)
+        self.password_entry.setFont(QFont("Consolas", 11))
+        self.password_entry.setFixedHeight(42)
+        self.password_entry.setStyleSheet("""
+            QLineEdit {
+                background-color: #1f1f35;
+                color: #00f7ff;
+                border: 1px solid #2d2d50;
+                border-radius: 6px;
+                padding: 0 12px;
+            }
+            QLineEdit:focus {
+                border: 1px solid #6c5ce7;
+            }
+        """)
+        self.password_entry.returnPressed.connect(self.handle_login)
+        card_layout.addWidget(self.password_entry)
+        card_layout.addSpacing(24)
+
+        # Login button
+        self.login_btn = QPushButton("LOGIN")
+        self.login_btn.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        self.login_btn.setFixedHeight(44)
+        self.login_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.login_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #6c5ce7;
+                color: white;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #7d6bff;
+            }
+            QPushButton:pressed {
+                background-color: #4834d4;
+            }
+        """)
+        self.login_btn.clicked.connect(self.handle_login)
+        card_layout.addWidget(self.login_btn)
+        card_layout.addSpacing(10)
+
+        # Register button
+        self.register_btn = QPushButton("REGISTER")
+        self.register_btn.setFont(QFont("Segoe UI", 10))
+        self.register_btn.setFixedHeight(42)
+        self.register_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.register_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                color: #00f7ff;
+                border: 1px solid #00f7ff;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #00f7ff;
+                color: #151528;
+            }
+            QPushButton:pressed {
+                background-color: #00c3cc;
+            }
+        """)
+        self.register_btn.clicked.connect(self.handle_register)
+        card_layout.addWidget(self.register_btn)
+
+        layout.addWidget(card)
+
+    def handle_login(self):
+        email = self.email_entry.text().strip()
+        password = self.password_entry.text().strip()
+
+        if not email or not password:
+            QMessageBox.warning(self, "Missing", "Please enter email and password")
+            return
+
+        try:
+            user = firebase_login(email, password)
+            id_token = user["idToken"]
+            user_email = user["email"]
+
+            self.close()
+
+            subprocess.Popen([
+                sys.executable,
+                "Chat_Client.py",
+                user_email,
+                id_token
+            ])
+
+        except Exception as e:
+            QMessageBox.critical(self, "Login Failed", str(e))
+
+    def handle_register(self):
+        email = self.email_entry.text().strip()
+        password = self.password_entry.text().strip()
+
+        if not email or not password:
+            QMessageBox.warning(self, "Missing", "Please enter email and password")
+            return
+
+        try:
+            firebase_register(email, password)
+            QMessageBox.information(self, "Success", "Register OK. You can login now.")
+        except Exception as e:
+            QMessageBox.critical(self, "Register Failed", str(e))
+
+
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    window = LoginWindow()
+    window.show()
+    sys.exit(app.exec())
 
