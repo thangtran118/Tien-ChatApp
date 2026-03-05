@@ -2,10 +2,16 @@ from firebase_service import save_chat_message, save_private_message
 import socket
 import threading
 import json
+import sys
 from datetime import datetime, timezone
-import tkinter as tk
-from tkinter import scrolledtext, messagebox, simpledialog
-from tkinter import ttk
+
+from PyQt6.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
+    QLabel, QListWidget, QPushButton, QTextEdit, QLineEdit,
+    QFrame, QSplitter
+)
+from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject
+from PyQt6.QtGui import QFont
 
 
 # ================= SERVER CORE ================= #
@@ -328,143 +334,174 @@ class ChatServerCore:
 
 
 
+# ================= SIGNAL BRIDGE ================= #
+# Bridges server callbacks (called from background threads) to Qt signals
+
+class ServerSignals(QObject):
+    log_signal          = pyqtSignal(str)
+    users_signal        = pyqtSignal(list)
+    calls_signal        = pyqtSignal(dict)
+
+
 # ================= ADMIN GUI ================= #
 
 
-class ServerAdminGUI:
-    def __init__(self, root):
-        self.root = root
-        self.root.title("🔥 Chat Server Admin Panel")
-        self.root.geometry("1100x700")
+class ServerAdminGUI(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Chat Server Admin Panel")
+        self.resize(1100, 700)
+        self.setStyleSheet("""
+            QMainWindow, QWidget { background: #1c1c1c; color: #e0e0e0; font-family: 'Segoe UI'; font-size: 10pt; }
+            QListWidget { background: #252526; border: 1px solid #333; border-radius: 4px; }
+            QListWidget::item { padding: 5px 8px; }
+            QListWidget::item:selected { background: #007ACC; color: white; }
+            QTextEdit { background: #1e1e1e; color: #d4d4d4; border: 1px solid #333; border-radius: 4px; font-family: 'Consolas', monospace; font-size: 9pt; }
+            QLineEdit { background: #2d2d2d; color: #e0e0e0; border: 1px solid #444; border-radius: 4px; padding: 4px 8px; }
+            QPushButton { background: #007ACC; color: white; border: none; border-radius: 4px; padding: 6px 14px; }
+            QPushButton:hover { background: #1a8fdb; }
+            QPushButton#kick { background: #e74856; }
+            QPushButton#kick:hover { background: #c0392b; }
+            QSplitter::handle { background: #333; }
+            QLabel#section { color: #007ACC; font-weight: bold; font-size: 10pt; }
+        """)
 
+        self.signals = ServerSignals()
+        self.signals.log_signal.connect(self._append_log)
+        self.signals.users_signal.connect(self._update_users)
+        self.signals.calls_signal.connect(self._update_calls)
 
-        main = tk.PanedWindow(root, orient=tk.HORIZONTAL)
-        main.pack(fill=tk.BOTH, expand=True)
+        self._build_ui()
+        self._start_server()
 
+    def _build_ui(self):
+        central = QWidget()
+        self.setCentralWidget(central)
+        root_lay = QHBoxLayout(central)
+        root_lay.setContentsMargins(8, 8, 8, 8)
+        root_lay.setSpacing(0)
 
-        # ===== LEFT PANEL =====
-        left = tk.Frame(main)
-        main.add(left, width=300)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
 
+        # ── Left panel ──────────────────────────
+        left = QWidget()
+        left.setFixedWidth(280)
+        ll = QVBoxLayout(left)
+        ll.setContentsMargins(0, 0, 6, 0)
+        ll.setSpacing(6)
 
-        tk.Label(left, text="Online Users", font=('Segoe UI', 12, 'bold')).pack(pady=5)
-        self.user_list = tk.Listbox(left)
-        self.user_list.pack(fill=tk.BOTH, expand=True, padx=5)
+        ul = QLabel("Online Users")
+        ul.setObjectName("section")
+        ll.addWidget(ul)
 
+        self.user_list = QListWidget()
+        ll.addWidget(self.user_list, 2)
 
-        tk.Button(left, text="Kick User", command=self.kick_user).pack(pady=5)
+        kick_btn = QPushButton("Kick Selected User")
+        kick_btn.setObjectName("kick")
+        kick_btn.clicked.connect(self.kick_user)
+        ll.addWidget(kick_btn)
 
+        cl = QLabel("Active Calls")
+        cl.setObjectName("section")
+        ll.addWidget(cl)
 
-        tk.Label(left, text="Active Calls", font=('Segoe UI', 12, 'bold')).pack(pady=5)
-        self.call_list = tk.Listbox(left)
-        self.call_list.pack(fill=tk.BOTH, expand=True, padx=5)
+        self.call_list = QListWidget()
+        ll.addWidget(self.call_list, 1)
 
+        splitter.addWidget(left)
 
-        # ===== RIGHT PANEL =====
-        right = tk.Frame(main)
-        main.add(right)
+        # ── Right panel ─────────────────────────
+        right = QWidget()
+        rl = QVBoxLayout(right)
+        rl.setContentsMargins(6, 0, 0, 0)
+        rl.setSpacing(6)
 
+        log_lbl = QLabel("Server Logs")
+        log_lbl.setObjectName("section")
+        rl.addWidget(log_lbl)
 
-        tk.Label(right, text="Server Logs", font=('Segoe UI', 12, 'bold')).pack()
+        self.log_display = QTextEdit()
+        self.log_display.setReadOnly(True)
+        rl.addWidget(self.log_display, 1)
 
+        # Global message row
+        msg_row = QHBoxLayout()
+        msg_row.setSpacing(6)
+        self.msg_entry = QLineEdit()
+        self.msg_entry.setPlaceholderText("Broadcast a global message...")
+        self.msg_entry.returnPressed.connect(self.send_global)
+        send_btn = QPushButton("Send Global")
+        send_btn.clicked.connect(self.send_global)
+        msg_row.addWidget(self.msg_entry, 1)
+        msg_row.addWidget(send_btn)
+        rl.addLayout(msg_row)
 
-        self.log_display = scrolledtext.ScrolledText(right, state=tk.DISABLED)
-        self.log_display.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
 
+        root_lay.addWidget(splitter)
 
-        bottom = tk.Frame(right)
-        bottom.pack(fill=tk.X)
-
-
-        self.msg_entry = tk.Entry(bottom)
-        self.msg_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-
-        tk.Button(bottom, text="Send Global Message", command=self.send_global).pack(side=tk.RIGHT)
-
-
-        # Start server core
+    def _start_server(self):
         self.server = ChatServerCore(
-            log_callback=self.add_log,
-            update_users_callback=self.update_users,
-            update_calls_callback=self.update_calls
+            log_callback=lambda msg: self.signals.log_signal.emit(msg),
+            update_users_callback=lambda users: self.signals.users_signal.emit(users),
+            update_calls_callback=lambda calls: self.signals.calls_signal.emit(calls),
         )
-
-
         threading.Thread(target=self.server.start, daemon=True).start()
 
-
-    def add_log(self, msg):
-        self.root.after(0, lambda: self._append_log(msg))
-
+    # ── Slot handlers (always on main thread via signals) ──
 
     def _append_log(self, msg):
-        self.log_display.config(state=tk.NORMAL)
-        self.log_display.insert(tk.END, msg + "\n")
-        self.log_display.config(state=tk.DISABLED)
-        self.log_display.see(tk.END)
-
-
-    def update_users(self, users):
-        self.root.after(0, lambda: self._update_users(users))
-
+        self.log_display.append(msg)
+        self.log_display.verticalScrollBar().setValue(
+            self.log_display.verticalScrollBar().maximum()
+        )
 
     def _update_users(self, users):
-        self.user_list.delete(0, tk.END)
+        self.user_list.clear()
         for u in users:
-            self.user_list.insert(tk.END, u)
-
-
-    def update_calls(self, calls):
-        self.root.after(0, lambda: self._update_calls(calls))
-
+            self.user_list.addItem(u)
 
     def _update_calls(self, calls):
-        self.call_list.delete(0, tk.END)
+        self.call_list.clear()
         for room, users in calls.items():
-            self.call_list.insert(tk.END, f"{room}: {users}")
-
+            self.call_list.addItem(f"{room}: {users}")
 
     def send_global(self):
-        msg = self.msg_entry.get().strip()
+        msg = self.msg_entry.text().strip()
         if not msg:
             return
-
-
         payload = {
-            'type':'chat',
-            'sender':'[ADMIN SYSTEM]',
-            'message':msg,
-            'room':'General',
-            'timestamp':datetime.now().strftime('%H:%M:%S')
+            'type': 'chat',
+            'sender': '[ADMIN]',
+            'message': msg,
+            'room': 'General',
+            'timestamp': datetime.now().strftime('%H:%M:%S')
         }
-
-
         self.server.broadcast(payload)
-        self.add_log(f"[SERVER -> GLOBAL]: {msg}")
-        self.msg_entry.delete(0, tk.END)
-
+        self._append_log(f"[SERVER -> GLOBAL]: {msg}")
+        self.msg_entry.clear()
 
     def kick_user(self):
-        selection = self.user_list.curselection()
-        if not selection:
+        item = self.user_list.currentItem()
+        if not item:
             return
-
-
-        user = self.user_list.get(selection[0])
+        user = item.text()
         self.server.disconnect(user)
-        self.add_log(f"[ADMIN] Kicked {user}")
-
-
+        self._append_log(f"[ADMIN] Kicked {user}")
 
 
 # ================= RUN ================= #
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
-    app = ServerAdminGUI(root)
-    root.mainloop()
+    app = QApplication(sys.argv)
+    app.setStyle("Fusion")
+    window = ServerAdminGUI()
+    window.show()
+    sys.exit(app.exec())
 
 
 
