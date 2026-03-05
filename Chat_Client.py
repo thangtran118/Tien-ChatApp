@@ -268,15 +268,41 @@ class ChatArea(QScrollArea):
         self._layout.addStretch()
         self.setWidget(self._container)
 
+        self._want_scroll_bottom = False
+        self.verticalScrollBar().rangeChanged.connect(self._on_range_changed)
+        self.verticalScrollBar().valueChanged.connect(self._on_scroll_value_changed)
+
+    def _on_range_changed(self, _min, _max):
+        """Fires whenever content height changes; scrolls to bottom if requested."""
+        if self._want_scroll_bottom:
+            self.verticalScrollBar().setValue(_max)
+
+    def _on_scroll_value_changed(self, value):
+        """If user scrolls away from bottom, stop auto-scrolling."""
+        sb = self.verticalScrollBar()
+        if value < sb.maximum() - 30:
+            self._want_scroll_bottom = False
+
     def add_widget(self, widget):
+        """Add widget and scroll to bottom (for real-time messages)."""
+        self._want_scroll_bottom = True
         self._layout.insertWidget(self._layout.count() - 1, widget)
-        QTimer.singleShot(50, self._scroll_to_bottom)
+
+    def add_widget_direct(self, widget):
+        """Add widget immediately without deferring (for history loading)."""
+        self._layout.insertWidget(self._layout.count() - 1, widget)
 
     def clear(self):
+        self._want_scroll_bottom = False
         while self._layout.count() > 1:
             item = self._layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
+    def scroll_to_bottom(self):
+        """Call after bulk history load to scroll once layout has settled."""
+        self._want_scroll_bottom = True
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def _scroll_to_bottom(self):
         self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
@@ -733,11 +759,14 @@ class SimplifiedClient(QMainWindow):
             self.display_system_message(f"Room '{room}' created")
 
         elif t == 'call_request':
-            self.handle_call_request(msg.get('sender'), msg.get('call_type'))
+            sender, call_type = msg.get('sender'), msg.get('call_type')
+            QTimer.singleShot(0, lambda: self.handle_call_request(sender, call_type))
         elif t == 'group_call_request':
-            self.handle_group_call_request(msg.get('room'), msg.get('caller'), msg.get('call_type'))
+            room, caller, call_type = msg.get('room'), msg.get('caller'), msg.get('call_type')
+            QTimer.singleShot(0, lambda: self.handle_group_call_request(room, caller, call_type))
         elif t == 'call_response':
-            self.handle_call_response(msg.get('responder'), msg.get('accepted'), msg.get('call_type', 'video'))
+            responder, accepted, call_type = msg.get('responder'), msg.get('accepted'), msg.get('call_type', 'video')
+            QTimer.singleShot(0, lambda: self.handle_call_response(responder, accepted, call_type))
         elif t == 'call_data':
             sender = msg.get('sender')
             if sender == self.username:
@@ -757,8 +786,8 @@ class SimplifiedClient(QMainWindow):
                 except Exception as e:
                     print("Audio decode error:", e)
         elif t == 'call_ended':
-            self.display_system_message(f"Call with {msg.get('peer')} ended")
-            self._stop_call_internal()
+            peer = msg.get('peer', '')
+            QTimer.singleShot(0, lambda: self._on_remote_call_ended(peer))
 
     # ── Display Helpers ──────────────────────────────────────
 
@@ -896,15 +925,22 @@ class SimplifiedClient(QMainWindow):
                 filedata = msg.get("filedata")
                 filetype = msg.get("filetype")
                 if content:
-                    self.display_message(sender, content, ts)
+                    b = MessageBubble(sender, content, ts, is_me=(sender == self.username))
+                    self.chat_area.add_widget_direct(b)
                 elif filename and filedata:
-                    fb = base64.b64decode(filedata)
-                    self.display_file_message(sender, filename, fb,
-                                              filetype == ".wav" and filename.startswith("voice_msg_"), ts)
+                    fb       = base64.b64decode(filedata)
+                    is_voice = (filetype == ".wav" and filename.startswith("voice_msg_"))
+                    b = FileBubble(sender, filename, fb, is_voice, ts,
+                                   is_me=(sender == self.username),
+                                   on_play=self.play_voice if is_voice else None,
+                                   on_download=self.download_file)
+                    self.chat_area.add_widget_direct(b)
         except Exception as e:
             print("Load history error:", e)
-        self.display_system_message(f"Switched to room: {room}")
+        sys_b = MessageBubble(None, f"Switched to room: {room}", None, is_system=True)
+        self.chat_area.add_widget_direct(sys_b)
         self._update_call_buttons()
+        self.chat_area.scroll_to_bottom()
 
     def _on_user_double_click(self, item):
         user = item.text()
@@ -922,15 +958,23 @@ class SimplifiedClient(QMainWindow):
                 filedata = msg.get("filedata")
                 filetype = msg.get("filetype")
                 if content:
-                    self.display_private_message(sender, content, ts)
+                    b = MessageBubble(sender, content, ts,
+                                      is_me=(sender == self.username), is_private=True)
+                    self.chat_area.add_widget_direct(b)
                 elif filename and filedata:
-                    fb = base64.b64decode(filedata)
-                    self.display_file_message(sender, filename, fb,
-                                              filetype == ".wav" and filename.startswith("voice_msg_"), ts)
+                    fb       = base64.b64decode(filedata)
+                    is_voice = (filetype == ".wav" and filename.startswith("voice_msg_"))
+                    b = FileBubble(sender, filename, fb, is_voice, ts,
+                                   is_me=(sender == self.username),
+                                   on_play=self.play_voice if is_voice else None,
+                                   on_download=self.download_file)
+                    self.chat_area.add_widget_direct(b)
         except Exception as e:
             print("Private history load error:", e)
-        self.display_system_message(f"Private chat with {user} started")
+        sys_b = MessageBubble(None, f"Private chat with {user} started", None, is_system=True)
+        self.chat_area.add_widget_direct(sys_b)
         self._update_call_buttons()
+        self.chat_area.scroll_to_bottom()
 
     def create_room(self):
         name, ok = QInputDialog.getText(self, "Create Room", "Enter room name:")
@@ -1104,6 +1148,11 @@ class SimplifiedClient(QMainWindow):
             self.display_system_message(f"{responder} rejected the call")
         self._update_call_buttons()
 
+    def _on_remote_call_ended(self, peer):
+        self.display_system_message(f"Call with {peer} ended")
+        self._stop_call_internal()
+        self._update_call_buttons()
+
     def end_call(self):
         if not self.in_call:
             return
@@ -1158,24 +1207,60 @@ class SimplifiedClient(QMainWindow):
         self._update_call_buttons()
 
     def _stop_call_internal(self):
+        if not self.in_call and not self.call_stop_event.is_set():
+            return
+
+        # 1. Signal all media threads to stop
         self.call_stop_event.set()
         self.in_call       = False
         self.call_peer     = None
         self.call_type     = None
         self.is_group_call = False
-        try:
-            if self.video_capture:    self.video_capture.release()
-            if self.audio_stream_in:  self.audio_stream_in.stop_stream();  self.audio_stream_in.close()
-            if self.audio_stream_out: self.audio_stream_out.stop_stream(); self.audio_stream_out.close()
-            if self.audio_interface:  self.audio_interface.terminate()
-        except: pass
-        self.video_capture = self.audio_stream_in = self.audio_stream_out = self.audio_interface = None
+
+        # 2. Close call window safely on main thread
+        if self.call_window:
+            try:
+                self.call_window.close()
+            except Exception:
+                pass
+            self.call_window = None
+
+        # 3. Clear queues so blocked threads can exit
         with self.video_display_queue.mutex: self.video_display_queue.queue.clear()
         with self.audio_play_queue.mutex:    self.audio_play_queue.queue.clear()
-        if self.call_window:
-            try: self.call_window.close()
+
+        # 4. Release PyAudio/cv2 in a background thread to avoid blocking UI
+        #    and to avoid race with audio loops still reading
+        def _cleanup():
+            time.sleep(0.3)  # wait for audio loops to notice stop_event
+            try:
+                if self.audio_stream_in:
+                    try: self.audio_stream_in.stop_stream()
+                    except: pass
+                    try: self.audio_stream_in.close()
+                    except: pass
             except: pass
-            self.call_window = None
+            try:
+                if self.audio_stream_out:
+                    try: self.audio_stream_out.stop_stream()
+                    except: pass
+                    try: self.audio_stream_out.close()
+                    except: pass
+            except: pass
+            try:
+                if self.audio_interface:
+                    self.audio_interface.terminate()
+            except: pass
+            try:
+                if self.video_capture:
+                    self.video_capture.release()
+            except: pass
+            self.audio_stream_in  = None
+            self.audio_stream_out = None
+            self.audio_interface  = None
+            self.video_capture    = None
+
+        threading.Thread(target=_cleanup, daemon=True).start()
 
     # ── Media Loops ──────────────────────────────────────────
 
@@ -1195,25 +1280,38 @@ class SimplifiedClient(QMainWindow):
 
     def _audio_send_loop(self):
         while not self.call_stop_event.is_set():
-            if not self.audio_stream_in: time.sleep(0.02); continue
+            stream = self.audio_stream_in
+            if not stream:
+                time.sleep(0.02)
+                continue
             try:
-                data = self.audio_stream_in.read(AUDIO_CHUNK, exception_on_overflow=False)
+                data = stream.read(AUDIO_CHUNK, exception_on_overflow=False)
+                if self.call_stop_event.is_set():
+                    break
                 b64  = base64.b64encode(data).decode('utf-8')
                 payload = {'type': 'call_data', 'data': b64, 'data_type': 'audio', 'sender': self.username}
                 payload['room' if self.is_group_call else 'peer'] = self.call_peer
                 self._send_json(payload)
             except Exception as e:
+                if self.call_stop_event.is_set():
+                    break
                 print("Audio send lag/error:", e)
                 continue
 
     def _audio_play_loop(self):
         while not self.call_stop_event.is_set():
             try:
-                audio_bytes = self.audio_play_queue.get(timeout=0.5)
-            except queue.Empty: continue
-            if self.audio_stream_out:
-                try: self.audio_stream_out.write(audio_bytes, exception_on_underflow=False)
-                except Exception: pass
+                audio_bytes = self.audio_play_queue.get(timeout=0.3)
+            except queue.Empty:
+                continue
+            if self.call_stop_event.is_set():
+                break
+            stream = self.audio_stream_out
+            if stream:
+                try:
+                    stream.write(audio_bytes, exception_on_underflow=False)
+                except Exception:
+                    pass
 
     def _video_display_loop(self):
         while not self.call_stop_event.is_set():
